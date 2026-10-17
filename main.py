@@ -137,7 +137,7 @@ if __name__ == "__main__":
     if not TOKEN:
         raise ValueError("BOT_TOKEN မတွေ့ပါ။ Render ရဲ့ Environment Variables ထဲမှာ စစ်ဆေးပေးပါ ခင်ဗျာ။")
         
-    app = ApplicationBuilder().token(TOKEN).build()
+   app = ApplicationBuilder().token(TOKEN).connect_timeout(30).read_timeout(30).write_timeout(30).build()
 
     # Handlers များ ထည့်သွင်းခြင်း
     app.add_handler(CommandHandler("start", start))
