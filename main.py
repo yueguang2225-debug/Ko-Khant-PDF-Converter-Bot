@@ -1,71 +1,149 @@
-import os
 import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import json
+import os
+from io import BytesIO
 from PIL import Image
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Admin ရဲ့ Telegram User ID
+ADMIN_ID = 8012437507
 
-TOKEN = os.getenv("BOT_TOKEN")
+# User စာရင်းမှတ်မည့် JSON ဖိုင်
+USERS_FILE = "users.json"
 
-USER_IMAGES = {}
+# Logging setup
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+
+def load_users():
+    """User စာရင်း ဖတ်ယူခြင်း"""
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
+
+def save_users(users):
+    """User အသစ်ကို JSON ဖိုင်ထဲ သိမ်းဆည်းခြင်း"""
+    try:
+        with open(USERS_FILE, "w") as f:
+            json.dump(list(users), f)
+    except Exception as e:
+        logging.error(f"Error saving users: {e}")
+
+def track_user(user_id):
+    """User ID ကို စစ်ဆေးပြီး မှတ်တမ်းတင်ခြင်း"""
+    users = load_users()
+    if user_id not in users:
+        users.add(user_id)
+        save_users(users)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/start command လက်ခံခြင်း"""
+    user_id = update.effective_user.id
+    track_user(user_id)
+    
+    # ဓာတ်ပုံသိမ်းဆည်းမည့် array ကို ရှင်းထုတ်ပါ
+    context.user_data["images"] = []
+    
     await update.message.reply_text(
-        "မင်္ဂလာပါ! ကျွန်တော်က File Converter Bot ပါ။\n"
-        "ကျေးဇူးပြု၍ PDF ပြောင်းလိုသော ပုံများကို တစ်ပုံချင်း (သို့မဟုတ်) အများပြား ပို့ပေးပါ။ "
-        "ပြီးလျှင် /done လို့ ရိုက်ပို့လိုက်ရင် PDF ဖိုင်အဖြစ် ပြန်ထုတ်ပေးပါမယ်။"
+        "မင်္ဂလာပါ! 📸\n\n"
+        "PDF ပြောင်းလိုသော ဓာတ်ပုံများကို တစ်ပုံချင်းစီ ပို့ပေးပါ။\n"
+        "ပုံများ ပို့ပြီးပါက PDF ထုတ်ယူရန် /convert ဟု ရိုက်ပို့ပါ ခင်ဗျာ။"
     )
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    photo_file = await update.message.photo[-1].get_file()
+async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ဓာတ်ပုံများ လက်ခံခြင်း"""
+    user_id = update.effective_user.id
+    track_user(user_id)
     
-    file_path = f"{user_id}_{len(USER_IMAGES.get(user_id, []))}.jpg"
-    await photo_file.download_to_drive(file_path)
-    
-    if user_id not in USER_IMAGES:
-        USER_IMAGES[user_id] = []
-    USER_IMAGES[user_id].append(file_path)
-    
-    await update.message.reply_text(f"ပုံ လက်ခံရရှိပါပြီ။ စုစုပေါင်း ပုံအရေအတွက်: {len(USER_IMAGES[user_id])}\nဆက်ပို့ရန် (သို့မဟုတ်) ပြီးရင် /done လို့ ရိုက်ပါ။")
+    if "images" not in context.user_data:
+        context.user_data["images"] = []
 
-async def generate_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id not in USER_IMAGES or not USER_IMAGES[user_id]:
-        await update.message.reply_text("ကျေးဇူးပြု၍ ပထမဆုံး ပုံများ ပို့ပေးပါ။")
+    # အကောင်းဆုံး အရည်အသွေးရှိသော ဓာတ်ပုံကို ရယူခြင်း
+    photo_file = await update.message.photo[-1].get_file()
+    image_bytes = await photo_file.download_as_bytearray()
+    
+    # Image memory ထဲ သိမ်းဆည်းခြင်း
+    image = Image.open(BytesIO(image_bytes))
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+        
+    context.user_data["images"].append(image)
+    
+    count = len(context.user_data["images"])
+    await update.message.reply_text(f"ဓာတ်ပုံ ({count}) ပုံ လက်ခံရရှိပါပြီ။ နောက်ထပ်ပုံများ ဆက်ပို့နိုင်သလို PDF ပြောင်းရန် /convert ကို နှိပ်ပါ ခင်ဗျာ။")
+
+async def convert_to_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """PDF အဖြစ် ပြောင်းလဲပေးခြင်း"""
+    user_id = update.effective_user.id
+    track_user(user_id)
+    
+    images = context.user_data.get("images", [])
+    
+    if not images:
+        await update.message.reply_text("ကျေးဇူးပြု၍ PDF ပြောင်းလိုသော ဓာတ်ပုံများကို အရင် ပို့ပေးပါ ခင်ဗျာ။")
         return
 
-    images = USER_IMAGES[user_id]
-    pdf_path = f"{user_id}_converted.pdf"
+    await update.message.reply_text("PDF သို့ ပြောင်းလဲနေပါသည်... ခဏစောင့်ပါ ခင်ဗျာ။")
+    
+    # PDF ဖိုင် ဖန်တီးခြင်း
+    pdf_bytes = BytesIO()
+    first_image = images[0]
+    rest_images = images[1:]
+    
+    first_image.save(
+        pdf_bytes,
+        format="PDF",
+        save_all=True,
+        append_images=rest_images
+    )
+    pdf_bytes.seek(0)
+    
+    # PDF ပြန်လည် ပို့ပေးခြင်း
+    await update.message.reply_document(
+        document=pdf_bytes,
+        filename="Converted_Document.pdf",
+        caption="သင့်ရဲ့ PDF ဖိုင် ရရှိပါပြီ ခင်ဗျာ! ✨"
+    )
+    
+    # သိမ်းဆည်းထားသော ပုံများ ပြန်ရှင်းထုတ်ခြင်း
+    context.user_data["images"] = []
 
-    try:
-        image_objects = [Image.open(img).convert('RGB') for img in images]
-        image_objects[0].save(pdf_path, save_all=True, append_images=image_objects[1:])
-        
-        with open(pdf_path, 'rb') as pdf_file:
-            await update.message.reply_document(document=pdf_file, caption="သင့်ရဲ့ PDF ဖိုင် ရပါပြီ!")
-            
-    except Exception as e:
-        logger.error(f"PDF conversion error: {e}")
-        await update.message.reply_text("PDF ပြောင်းရာတွင် အမှားအယွင်း ရှိသွားပါသည်။")
-    finally:
-        for img in images:
-            if os.path.exists(img):
-                os.remove(img)
-        if os.path.exists(pdf_path):
-            os.remove(pdf_path)
-        USER_IMAGES[user_id] = []
-
-def main():
-    application = Application.builder().token(TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("done", generate_pdf))
-    application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo))
-
-    application.run_polling()
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin တစ်ယောက်တည်း စုစုပေါင်း User အရေအတွက် ကြည့်ရန် Command"""
+    user_id = update.effective_user.id
+    if user_id == ADMIN_ID:
+        users = load_users()
+        await update.message.reply_text(f"📊 **Bot သုံးစွဲသူ စာရင်းအချက်အလက်**\n\nစုစုပေါင်း သုံးစွဲသူ: **{len(users)}** ယောက် ရှိပါသည်။")
+    else:
+        await update.message.reply_text("ဒီ command ကို Admin ပဲ သုံးခွင့်ရှိပါတယ် ခင်ဗျာ။")
 
 if __name__ == "__main__":
-    main()
+    # Environment variable ထဲက BOT_TOKEN ကို ယူခြင်း
+    TOKEN = os.getenv("BOT_TOKEN")
+    
+    if not TOKEN:
+        raise ValueError("BOT_TOKEN မတွေ့ပါ။ Render ရဲ့ Environment Variables ထဲမှာ စစ်ဆေးပေးပါ ခင်ဗျာ။")
+        
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    # Handlers များ ထည့်သွင်းခြင်း
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("convert", convert_to_pdf))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+
+    # Bot စတင် ပတ်မောင်းခြင်း
+    app.run_polling()
