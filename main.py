@@ -54,7 +54,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     track_user(user_id)
     
-    # ဓာတ်ပုံသိမ်းဆည်းမည့် array ကို ရှင်းထုတ်ပါ
     context.user_data["images"] = []
     
     await update.message.reply_text(
@@ -71,11 +70,9 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "images" not in context.user_data:
         context.user_data["images"] = []
 
-    # အကောင်းဆုံး အရည်အသွေးရှိသော ဓာတ်ပုံကို ရယူခြင်း
     photo_file = await update.message.photo[-1].get_file()
     image_bytes = await photo_file.download_as_bytearray()
     
-    # Image memory ထဲ သိမ်းဆည်းခြင်း
     image = Image.open(BytesIO(image_bytes))
     if image.mode != "RGB":
         image = image.convert("RGB")
@@ -98,7 +95,6 @@ async def convert_to_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("PDF သို့ ပြောင်းလဲနေပါသည်... ခဏစောင့်ပါ ခင်ဗျာ။")
     
-    # PDF ဖိုင် ဖန်တီးခြင်း
     pdf_bytes = BytesIO()
     first_image = images[0]
     rest_images = images[1:]
@@ -111,14 +107,12 @@ async def convert_to_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     pdf_bytes.seek(0)
     
-    # PDF ပြန်လည် ပို့ပေးခြင်း
     await update.message.reply_document(
         document=pdf_bytes,
         filename="Converted_Document.pdf",
         caption="သင့်ရဲ့ PDF ဖိုင် ရရှိပါပြီ ခင်ဗျာ! ✨"
     )
     
-    # သိမ်းဆည်းထားသော ပုံများ ပြန်ရှင်းထုတ်ခြင်း
     context.user_data["images"] = []
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -131,19 +125,16 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ဒီ command ကို Admin ပဲ သုံးခွင့်ရှိပါတယ် ခင်ဗျာ။")
 
 if __name__ == "__main__":
-    # Environment variable ထဲက BOT_TOKEN ကို ယူခြင်း
     TOKEN = os.getenv("BOT_TOKEN")
     
     if not TOKEN:
         raise ValueError("BOT_TOKEN မတွေ့ပါ။ Render ရဲ့ Environment Variables ထဲမှာ စစ်ဆေးပေးပါ ခင်ဗျာ။")
         
-   app = ApplicationBuilder().token(TOKEN).connect_timeout(30).read_timeout(30).write_timeout(30).build()
+    app = ApplicationBuilder().token(TOKEN).connect_timeout(30).read_timeout(30).write_timeout(30).build()
 
-    # Handlers များ ထည့်သွင်းခြင်း
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("convert", convert_to_pdf))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 
-    # Bot စတင် ပတ်မောင်းခြင်း
     app.run_polling()
